@@ -1,11 +1,5 @@
 import math
 
-# Worst-case operation-count formulas, not literal execution: e.g. bubble_sort
-# at n_max=10,000 sampled every step=10 would mean actually looping ~1000
-# times over inputs up to size 10,000 (billions of ops) — infeasible to run
-# live in a request. The formulas give the exact same growth curve instantly.
-
-
 def _linear_search(n):
     return n
 
@@ -38,6 +32,34 @@ def _nested_loops(n):
     return n * n
 
 
+def _stack_push_pop(n):
+    return 2 * n
+
+
+def _queue_enqueue_dequeue(n):
+    return 2 * n
+
+
+def _queue_dequeue_naive(n):
+    return n * (n + 1) / 2
+
+
+def _balanced_parentheses(n):
+    return n
+
+
+def _reverse_string(n):
+    return 2 * n
+
+
+def _is_palindrome(n):
+    return 4 * n
+
+
+def _generate_binary_numbers(n):
+    return 3 * n
+
+
 # name -> (Big-O label, worst-case operation-count formula)
 ALGORITHMS = {
     "linear_search": ("O(n)", _linear_search),
@@ -48,4 +70,12 @@ ALGORITHMS = {
     "insertion_sort": ("O(n^2)", _insertion_sort),
     "merge_sort": ("O(n log n)", _merge_sort),
     "quick_sort": ("O(n log n)", _quick_sort),
+    "stack_push_pop": ("O(n)", _stack_push_pop),
+    "queue_enqueue_dequeue": ("O(n)", _queue_enqueue_dequeue),
+    "queue_dequeue_naive": ("O(n^2)", _queue_dequeue_naive),
+    "balanced_parentheses": ("O(n)", _balanced_parentheses),
+    "reverse_string": ("O(n)", _reverse_string),
+    "is_palindrome": ("O(n)", _is_palindrome),
+    "generate_binary_numbers": ("O(n)", _generate_binary_numbers),
 }
+
