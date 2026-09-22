@@ -22,6 +22,13 @@ def _parse_int(value, default):
         return default
     return int(str(value).replace(",", "").strip())
 
+@app.route("/", methods=["GET"])
+def index():
+    return jsonify({
+        "message": "Visualizer is running.",
+        "usage": "/analyze?algo=<name>&n_max=<int>&step=<int>",
+        "supported_algorithms": sorted(ALGORITHMS.keys()),
+    })
 
 @app.route("/analyze", methods=["GET"])
 def analyze():
