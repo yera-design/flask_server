@@ -1,19 +1,34 @@
 import base64
 import io
+import math
 import os
 import time
+from pathlib import Path
 
 import matplotlib
 
 matplotlib.use("Agg")  # render without a display, required for a server process
 import matplotlib.pyplot as plt
 from flask import Flask, jsonify, request
+from sqlalchemy.exc import SQLAlchemyError
 
 from algorithms import ALGORITHMS
+from models import Analysis, db
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 app = Flask(__name__)
 
-PLOTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plots")
+# SQLite file next to this script by default; set DATABASE_URL to point
+# elsewhere (e.g. a Postgres URL) without touching the code.
+app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get(
+    "DATABASE_URL", f"sqlite:///{Path(BASE_DIR, 'analyses.db').as_posix()}"
+)
+db.init_app(app)
+with app.app_context():
+    db.create_all()  # no-op if the tables already exist
+
+PLOTS_DIR = os.path.join(BASE_DIR, "plots")
 os.makedirs(PLOTS_DIR, exist_ok=True)
 
 
@@ -22,13 +37,65 @@ def _parse_int(value, default):
         return default
     return int(str(value).replace(",", "").strip())
 
+
+def _is_int(value):
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _is_number(value):
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
+
+
+def _validate_analysis_payload(payload):
+    """Return an error message if the payload is not a valid /analyze result, else None."""
+    if not isinstance(payload, dict):
+        return "Request body must be a JSON object"
+
+    required = ["algo", "complexity", "step", "n_max", "n_values", "operation_counts"]
+    missing = [key for key in required if key not in payload]
+    if missing:
+        return f"Missing required field(s): {', '.join(missing)}"
+
+    algo = payload["algo"]
+    if not isinstance(algo, str) or algo not in ALGORITHMS:
+        return f"Unsupported algorithm '{algo}'"
+    if payload["complexity"] != ALGORITHMS[algo][0]:
+        return f"complexity does not match '{algo}' (expected {ALGORITHMS[algo][0]})"
+
+    if not _is_int(payload["step"]) or payload["step"] <= 0:
+        return "step must be an integer > 0"
+    if not _is_int(payload["n_max"]) or payload["n_max"] < 0:
+        return "n_max must be an integer >= 0"
+
+    n_values, op_counts = payload["n_values"], payload["operation_counts"]
+    for name, values in (("n_values", n_values), ("operation_counts", op_counts)):
+        if not isinstance(values, list) or not values:
+            return f"{name} must be a non-empty list"
+        if not all(_is_number(v) for v in values):
+            return f"{name} must contain only finite numbers"
+    if len(n_values) != len(op_counts):
+        return "n_values and operation_counts must be the same length"
+
+    for name in ("image_path", "image_base64"):
+        if payload.get(name) is not None and not isinstance(payload[name], str):
+            return f"{name} must be a string"
+
+    return None
+
+
 @app.route("/", methods=["GET"])
 def index():
     return jsonify({
         "message": "Visualizer is running.",
         "usage": "/analyze?algo=<name>&n_max=<int>&step=<int>",
+        "save": "POST /save_analysis with the JSON returned by /analyze",
         "supported_algorithms": sorted(ALGORITHMS.keys()),
     })
+
 
 @app.route("/analyze", methods=["GET"])
 def analyze():
@@ -80,6 +147,38 @@ def analyze():
         "image_path": filepath,
         "image_base64": image_base64,
     })
+
+
+@app.route("/save_analysis", methods=["POST"])
+def save_analysis():
+    payload = request.get_json(silent=True)
+    error = _validate_analysis_payload(payload)
+    if error:
+        return jsonify({"error": error}), 400
+
+    analysis = Analysis(
+        algo=payload["algo"],
+        complexity=payload["complexity"],
+        step=payload["step"],
+        n_max=payload["n_max"],
+        n_values=payload["n_values"],
+        operation_counts=payload["operation_counts"],
+        image_path=payload.get("image_path"),
+        image_base64=payload.get("image_base64"),
+    )
+
+    try:
+        db.session.add(analysis)
+        db.session.commit()
+    except SQLAlchemyError:
+        db.session.rollback()
+        app.logger.exception("Failed to save analysis")
+        return jsonify({"error": "Could not save the analysis to the database"}), 500
+
+    return jsonify({
+        "message": "Analysis saved",
+        "analysis": analysis.to_dict(),
+    }), 201
 
 
 if __name__ == "__main__":
