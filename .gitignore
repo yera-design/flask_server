@@ -5,3 +5,5 @@ venv/
 plots/*.png
 *.db
 instance/
+*.db
+instance/

@@ -25,6 +25,7 @@ class Analysis(db.Model):
     operation_counts = db.Column(db.JSON, nullable=False)
     image_path = db.Column(db.String(512), nullable=True)
     image_base64 = db.Column(db.Text, nullable=True)
+    created_by = db.Column(db.String(120), nullable=True)  # JWT identity of the caller
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=_utcnow)
 
     def to_dict(self, include_image=False):
@@ -37,6 +38,7 @@ class Analysis(db.Model):
             "n_values": self.n_values,
             "operation_counts": self.operation_counts,
             "image_path": self.image_path,
+            "created_by": self.created_by,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
         if include_image:

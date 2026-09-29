@@ -3,6 +3,7 @@ import io
 import math
 import os
 import time
+from datetime import timedelta
 from pathlib import Path
 
 import matplotlib
@@ -10,6 +11,12 @@ import matplotlib
 matplotlib.use("Agg")  # render without a display, required for a server process
 import matplotlib.pyplot as plt
 from flask import Flask, jsonify, request
+from flask_jwt_extended import (
+    JWTManager,
+    create_access_token,
+    get_jwt_identity,
+    jwt_required,
+)
 from sqlalchemy.exc import SQLAlchemyError
 
 from algorithms import ALGORITHMS
@@ -27,6 +34,38 @@ app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get(
 db.init_app(app)
 with app.app_context():
     db.create_all()  # no-op if the tables already exist
+
+# JWT_SECRET_KEY signs and verifies tokens; set it via an env var in any real
+# deployment. JWT_TOKEN_LOCATION defaults to ["headers"], so tokens are only
+# ever read from the Authorization header, never from a query parameter.
+app.config["JWT_SECRET_KEY"] = os.environ.get(
+    "JWT_SECRET_KEY", "dev-only-secret-key-please-override-in-any-real-deployment"
+)
+app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(hours=1)
+jwt = JWTManager(app)
+
+# This exercise has one user, checked against env vars so nothing sensitive
+# is hardcoded in source. Swap for a real user table/password hashing if this
+# ever needs more than one account.
+APP_USERNAME = os.environ.get("APP_USERNAME", "student")
+APP_PASSWORD = os.environ.get("APP_PASSWORD", "changeme123")
+
+UNAUTHORIZED_MESSAGE = "I don't know you. Bye."
+
+
+@jwt.unauthorized_loader  # no Authorization header at all
+def _handle_missing_token(_reason):
+    return jsonify({"error": UNAUTHORIZED_MESSAGE}), 401
+
+
+@jwt.invalid_token_loader  # header present but malformed/bad signature
+def _handle_invalid_token(_reason):
+    return jsonify({"error": UNAUTHORIZED_MESSAGE}), 401
+
+
+@jwt.expired_token_loader  # header present, well-formed, but expired
+def _handle_expired_token(_jwt_header, _jwt_payload):
+    return jsonify({"error": UNAUTHORIZED_MESSAGE}), 401
 
 PLOTS_DIR = os.path.join(BASE_DIR, "plots")
 os.makedirs(PLOTS_DIR, exist_ok=True)
@@ -92,7 +131,8 @@ def index():
     return jsonify({
         "message": "Visualizer is running.",
         "usage": "/analyze?algo=<name>&n_max=<int>&step=<int>",
-        "save": "POST /save_analysis with the JSON returned by /analyze",
+        "login": "POST /login with {\"username\", \"password\"} to get a JWT",
+        "save": "POST /save_analysis (needs 'Authorization: Bearer <token>') with the JSON returned by /analyze",
         "supported_algorithms": sorted(ALGORITHMS.keys()),
     })
 
@@ -149,7 +189,24 @@ def analyze():
     })
 
 
+@app.route("/login", methods=["POST"])
+def login():
+    credentials = request.get_json(silent=True) or {}
+    username = credentials.get("username")
+    password = credentials.get("password")
+
+    if username != APP_USERNAME or password != APP_PASSWORD:
+        return jsonify({"error": "Invalid username or password"}), 401
+
+    access_token = create_access_token(identity=username)
+    response = jsonify({"access_token": access_token})
+    # Also expose it as a response header, in addition to the JSON body.
+    response.headers["Authorization"] = f"Bearer {access_token}"
+    return response, 200
+
+
 @app.route("/save_analysis", methods=["POST"])
+@jwt_required()  # requires "Authorization: Bearer <token>" on the request
 def save_analysis():
     payload = request.get_json(silent=True)
     error = _validate_analysis_payload(payload)
@@ -165,6 +222,7 @@ def save_analysis():
         operation_counts=payload["operation_counts"],
         image_path=payload.get("image_path"),
         image_base64=payload.get("image_base64"),
+        created_by=get_jwt_identity(),
     )
 
     try:
